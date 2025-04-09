@@ -1,0 +1,6 @@
+@CineNicheAPI_HostAddress = http://localhost:5016
+
+GET {{CineNicheAPI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###

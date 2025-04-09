@@ -1,0 +1,24 @@
+# Logs
+node_modules
+dist
+*.log
+*.cache
+*.obj
+*.dll
+*.exe
+.DS_Store
+.env
+.vscode
+
+.env
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
