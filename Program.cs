@@ -847,25 +847,6 @@ app.MapGet("/countries", (HttpRequest req) =>
 // 🎬 /titles (supports filtering by multiple values like ?title=A&title=B)
 app.MapGet("/titles", (HttpRequest req) =>
 {
-    // 🔐 JWT auth check
-    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
-        jwtClaims.TryGetValue("email", out var emailObj) &&
-        emailObj is string email)
-    {
-        Console.WriteLine($"🔐 Authenticated user: {email}");
-
-        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
-        if (userType != "authenticated" && userType != "admin")
-        {
-            return Results.Unauthorized();
-        }
-    }
-    else
-    {
-        Console.WriteLine("❌ No valid JWT or email found.");
-        return Results.Unauthorized();
-    }
-
     var query = req.Query;
 
     bool countOnly = query.TryGetValue("countOnly", out var countOnlyVal) && bool.TryParse(countOnlyVal, out var parsedBool) && parsedBool;
