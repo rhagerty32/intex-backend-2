@@ -9,6 +9,8 @@ using System.Linq;
 using CineNicheAPI.Models;
 using FuzzySharp.SimilarityRatio.Scorer;
 using FuzzySharp.PreProcess;
+using System.IdentityModel.Tokens.Jwt;
+using System.Security.Claims;
 
 DotNetEnv.Env.Load();
 
@@ -31,6 +33,15 @@ builder.Services.AddCors(options =>
 var app = builder.Build();
 app.UseCors("AllowFrontend");
 
+// Redirect HTTP to HTTPS
+app.UseHttpsRedirection();
+
+// Enable HSTS (HTTP Strict Transport Security) in production only
+if (!app.Environment.IsDevelopment())
+{
+    app.UseHsts();
+}
+
 var API_KEY = Environment.GetEnvironmentVariable("API_KEY") ?? "abc123";
 string DB_PATH = "Data Source=unified_movies.db";
 
@@ -44,6 +55,76 @@ app.Use(async (context, next) =>
         await context.Response.WriteAsync("Unauthorized");
         return;
     }
+    await next();
+});
+
+app.Use(async (context, next) =>
+{
+    var authHeader = context.Request.Headers["Authorization"].FirstOrDefault();
+    string userType = "unauthenticated"; // default
+
+    if (authHeader != null && authHeader.StartsWith("Bearer "))
+    {
+        var token = authHeader.Substring("Bearer ".Length).Trim();
+        var handler = new JwtSecurityTokenHandler();
+
+        try
+        {
+            var jwtToken = handler.ReadJwtToken(token);
+
+            var claims = new Dictionary<string, object>();
+            foreach (var claim in jwtToken.Claims)
+            {
+                try
+                {
+                    if (claim.Value.StartsWith("{") || claim.Value.StartsWith("["))
+                    {
+                        using var doc = JsonDocument.Parse(claim.Value);
+                        claims[claim.Type] = doc.RootElement.Clone();
+                    }
+                    else
+                    {
+                        claims[claim.Type] = claim.Value;
+                    }
+                }
+                catch
+                {
+                    claims[claim.Type] = claim.Value;
+                }
+            }
+
+            Console.WriteLine("🔐 JWT Claims:");
+            foreach (var kvp in claims)
+            {
+                var value = kvp.Value is JsonElement el ? el.ToString() : kvp.Value?.ToString();
+                Console.WriteLine($"   {kvp.Key}: {value}");
+            }
+
+            context.Items["jwt"] = claims;
+
+            // Set userType
+            var email = claims.TryGetValue("email", out var e) ? e.ToString()?.ToLower() : null;
+            if (email == "ry2402@gmail.com" || email == "ryan@spotparking.app")
+            {
+                userType = "admin";
+            }
+            else if (!string.IsNullOrWhiteSpace(email))
+            {
+                userType = "authenticated";
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine("⚠️ Failed to decode JWT: " + ex.Message);
+            context.Response.StatusCode = 401;
+            await context.Response.WriteAsync("Invalid token");
+            return;
+        }
+    }
+
+    context.Items["userType"] = userType;
+    Console.WriteLine($"🧠 User type: {userType}");
+
     await next();
 });
 
@@ -76,6 +157,39 @@ List<Dictionary<string, object>> RunQuery(string sql, object[]? values = null)
     }
 
     return results;
+}
+
+// 👤 JWT Decoding Helper
+JsonElement? DecodeJwtPayload(HttpRequest req)
+{
+    var authHeader = req.Headers["Authorization"].FirstOrDefault();
+
+    if (!string.IsNullOrEmpty(authHeader) && authHeader.StartsWith("Bearer "))
+    {
+        var token = authHeader.Substring("Bearer ".Length);
+        var parts = token.Split('.');
+
+        if (parts.Length == 3)
+        {
+            try
+            {
+                var payload = parts[1];
+                var jsonBytes = Convert.FromBase64String(PadBase64(payload));
+                return JsonDocument.Parse(jsonBytes).RootElement;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ JWT decoding failed: {ex.Message}");
+            }
+        }
+    }
+
+    return null;
+}
+
+string PadBase64(string base64)
+{
+    return base64.PadRight(base64.Length + (4 - base64.Length % 4) % 4, '=');
 }
 
 app.MapPost("/check-user", async (HttpContext context) =>
@@ -196,9 +310,305 @@ app.MapPost("/auth", async (HttpContext context) =>
     await context.Response.WriteAsJsonAsync(successResponse);
 });
 
-//^ DONEEEEEEE
-app.MapGet("/api/search", (HttpRequest req) =>
+
+app.MapGet("/superSearch", (HttpRequest req) =>
 {
+    var query = req.Query["q"].ToString().ToLower();
+
+    if (string.IsNullOrWhiteSpace(query))
+    {
+        Console.WriteLine("⚠️ Empty query received.");
+        return Results.BadRequest("Search query 'q' is required.");
+    }
+
+    var sql = "select * from titles";
+    var allTitles = RunQuery(sql);
+
+    var seenBlobs = new HashSet<string>();
+    var indexed = allTitles.Select((row, idx) =>
+    {
+        var genreKeywords = row
+            .Where(kv => kv.Value?.ToString() == "1" && kv.Key != null)
+            .Select(kv => kv.Key.ToLower());
+
+        var blobParts = new[]
+        {
+            row.GetValueOrDefault("title")?.ToString()?.ToLower(),
+            row.GetValueOrDefault("description")?.ToString()?.ToLower(),
+            row.GetValueOrDefault("director")?.ToString()?.ToLower(),
+            row.GetValueOrDefault("country")?.ToString()?.ToLower(),
+            string.Join(" ", genreKeywords)
+        };
+
+        var rawBlob = string.Join(" ", blobParts.Where(p => !string.IsNullOrWhiteSpace(p)));
+        var uniqueBlob = rawBlob;
+
+        // Make the key unique if already used
+        int suffix = 1;
+        while (!seenBlobs.Add(uniqueBlob))
+        {
+            uniqueBlob = $"{rawBlob}__{suffix}";
+            suffix++;
+        }
+
+        return new SearchableMovie
+        {
+            Data = row,
+            SearchBlob = uniqueBlob
+        };
+    }).ToList();
+
+    var blobToMovie = indexed.ToDictionary(m => m.SearchBlob, m => m.Data);
+
+    var matches = Process.ExtractTop(
+        query,
+        blobToMovie.Keys,
+        s => s,
+        limit: 50
+    );
+
+    var results = matches
+        .Select(match => blobToMovie[match.Value])
+        .ToList();
+
+    return Results.Ok(results);
+});
+
+
+
+
+app.MapPost("/add-movie", async (HttpRequest req) =>
+{
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        // ✅ Only allow admin
+        if (email != "ry2402@gmail.com" && email != "ryan@spotparking.app")
+        {
+            Console.WriteLine("🚫 Access denied: not an admin.");
+            return Results.Unauthorized(); // or throw or return your error type
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
+    var json = await JsonDocument.ParseAsync(req.Body);
+    var body = new Dictionary<string, object>();
+
+    foreach (var prop in json.RootElement.EnumerateObject())
+    {
+        var val = prop.Value;
+
+        // Safely convert JsonElement to CLR types
+        body[prop.Name] = val.ValueKind switch
+        {
+            JsonValueKind.Number => val.TryGetInt32(out var intVal) ? intVal : val.GetDouble(),
+            JsonValueKind.String => val.GetString() ?? "",
+            JsonValueKind.True => 1,
+            JsonValueKind.False => 0,
+            _ => DBNull.Value
+        };
+    }
+
+    // Generate a unique show_id
+    body["show_id"] = Guid.NewGuid().ToString();
+
+    var fields = body.Keys.ToList();
+    var columns = string.Join(", ", fields.Select(f => $"\"{f}\""));
+    var placeholders = string.Join(", ", fields.Select((_, i) => $"@p{i}"));
+
+    var sql = $"INSERT INTO titles ({columns}) VALUES ({placeholders})";
+
+    using var connection = new SqliteConnection(DB_PATH);
+    connection.Open();
+
+    using var command = connection.CreateCommand();
+    command.CommandText = sql;
+
+    for (int i = 0; i < fields.Count; i++)
+    {
+        command.Parameters.AddWithValue($"@p{i}", body[fields[i]] ?? DBNull.Value);
+    }
+
+    try
+    {
+        command.ExecuteNonQuery();
+        return Results.Ok(new { success = true, show_id = body["show_id"] });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Failed to insert movie: {ex.Message}");
+    }
+});
+
+app.MapPatch("/patch-movie", async (HttpContext context) =>
+{
+    if (context.Request.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        // ✅ Only allow admin
+        if (email != "ry2402@gmail.com" && email != "ryan@spotparking.app")
+        {
+            Console.WriteLine("🚫 Access denied: not an admin.");
+            return Results.Unauthorized(); // or throw or return your error type
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
+    using var reader = new StreamReader(context.Request.Body);
+    var body = await reader.ReadToEndAsync();
+    var json = JsonDocument.Parse(body).RootElement;
+
+    if (!json.TryGetProperty("show_id", out var showIdProp) || string.IsNullOrWhiteSpace(showIdProp.GetString()))
+    {
+        return Results.BadRequest("Missing or invalid show_id.");
+    }
+
+    var showId = showIdProp.GetString()!;
+    var updates = new List<string>();
+    var parameters = new List<object>();
+    int paramIndex = 0;
+
+    foreach (var prop in json.EnumerateObject())
+    {
+        if (prop.Name == "show_id") continue;
+
+        updates.Add($"{prop.Name} = @p{paramIndex}");
+        parameters.Add(prop.Value.ValueKind switch
+        {
+            JsonValueKind.Number => prop.Value.TryGetInt32(out var iVal) ? iVal : (object)prop.Value.GetDecimal(),
+            JsonValueKind.String => prop.Value.GetString() ?? "",
+            JsonValueKind.True => 1,
+            JsonValueKind.False => 0,
+            _ => DBNull.Value
+        });
+
+        paramIndex++;
+    }
+
+    if (!updates.Any())
+    {
+        return Results.BadRequest("No fields to update.");
+    }
+
+    parameters.Add(showId); // Add show_id as the last parameter
+
+    var sql = $"UPDATE titles SET {string.Join(", ", updates)} WHERE show_id = @p{paramIndex}";
+
+    using var connection = new SqliteConnection(DB_PATH);
+    connection.Open();
+    using var command = connection.CreateCommand();
+    command.CommandText = sql;
+
+    for (int i = 0; i < parameters.Count; i++)
+    {
+        command.Parameters.AddWithValue($"@p{i}", parameters[i]);
+    }
+
+    var rowsAffected = command.ExecuteNonQuery();
+    if (rowsAffected > 0)
+    {
+        return Results.Ok(new { success = true });
+    }
+    else
+    {
+        return Results.NotFound("Movie not found or nothing updated.");
+    }
+});
+
+app.MapPost("/delete-movie", async (HttpContext context) =>
+{
+    if (context.Request.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        // ✅ Only allow admin
+        if (email != "ry2402@gmail.com" && email != "ryan@spotparking.app")
+        {
+            Console.WriteLine("🚫 Access denied: not an admin.");
+            return Results.Unauthorized(); // or throw or return your error type
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
+    using var reader = new StreamReader(context.Request.Body);
+    var body = await reader.ReadToEndAsync();
+
+    if (string.IsNullOrWhiteSpace(body))
+    {
+        return Results.BadRequest("Missing request body.");
+    }
+
+    var json = JsonDocument.Parse(body).RootElement;
+
+    if (!json.TryGetProperty("show_id", out var showIdProp) || string.IsNullOrWhiteSpace(showIdProp.GetString()))
+    {
+        return Results.BadRequest("Missing or invalid show_id.");
+    }
+
+    var showId = showIdProp.GetString();
+
+    using var connection = new SqliteConnection(DB_PATH);
+    connection.Open();
+
+    using var deleteCommand = connection.CreateCommand();
+    deleteCommand.CommandText = "delete from titles where show_id = @p0";
+    deleteCommand.Parameters.AddWithValue("@p0", showId);
+
+    var rowsAffected = deleteCommand.ExecuteNonQuery();
+
+    if (rowsAffected > 0)
+    {
+        return Results.Ok(new { success = true });
+    }
+    else
+    {
+        return Results.NotFound("Movie not found.");
+    }
+});
+
+
+//^ DONEEEEEEE
+app.MapGet("/search", async (HttpRequest req) =>
+{
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
     var query = req.Query["q"].ToString().ToLower();
 
     if (string.IsNullOrWhiteSpace(query))
@@ -236,10 +646,20 @@ app.MapGet("/api/search", (HttpRequest req) =>
         };
     }).ToList();
 
-    // Build dictionary: blob => movie
-    var blobToMovie = indexed.ToDictionary(m => m.SearchBlob, m => m);
+    var blobToMovie = new Dictionary<string, SearchableMovie>();
+    int counter = 0;
 
-    // Use FuzzySharp with strings only
+    foreach (var movie in indexed)
+    {
+        var key = movie.SearchBlob;
+        while (blobToMovie.ContainsKey(key))
+        {
+            counter++;
+            key = $"{movie.SearchBlob}_{counter}";
+        }
+        blobToMovie[key] = movie;
+    }
+
     var matches = Process.ExtractTop(
         query,
         blobToMovie.Keys,
@@ -247,7 +667,6 @@ app.MapGet("/api/search", (HttpRequest req) =>
         limit: 25
     );
 
-    // Map fuzzy matches back to full movie info
     var results = matches
         .Select(match => new
         {
@@ -266,8 +685,27 @@ app.MapGet("/api/search", (HttpRequest req) =>
 
 
 
-app.MapGet("/api/singleTitle", (HttpRequest req) =>
+app.MapGet("/singleTitle", (HttpRequest req) =>
 {
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
     var query = req.Query;
 
     if (!query.TryGetValue("title", out var titleVal) || string.IsNullOrWhiteSpace(titleVal))
@@ -292,13 +730,142 @@ app.MapGet("/api/singleTitle", (HttpRequest req) =>
     return Results.Ok(result[0]);
 });
 
-
-
-
-
-// 🎬 /api/titles (supports filtering by multiple values like ?title=A&title=B)
-app.MapGet("/api/titles", (HttpRequest req) =>
+app.MapGet("/getAllTitles", (HttpRequest req) =>
 {
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
+    var query = req.Query;
+
+    // 🧭 Pagination
+    int pageSize = query.TryGetValue("pageSize", out var pageSizeVal) && int.TryParse(pageSizeVal, out var parsedSize) ? parsedSize : 10;
+    int pageNumber = query.TryGetValue("pageNumber", out var pageNumVal) && int.TryParse(pageNumVal, out var parsedPage) ? parsedPage : 0;
+    int offset = pageSize * pageNumber;
+
+    var filters = new List<string>();
+    var parameters = new List<object>();
+    int paramIndex = 0;
+
+    foreach (var (key, values) in query)
+    {
+        if (key is "pageSize" or "pageNumber") continue;
+
+        // Special handling for genre filters (they are column names with value = 1)
+        if (key.ToLower() == "genre")
+        {
+            foreach (var genreVal in values)
+            {
+                filters.Add($"\"{genreVal}\" = '1'");
+            }
+            continue;
+        }
+
+        // Skip empty values
+        if (values.Count == 0 || string.IsNullOrWhiteSpace(values[0]))
+            continue;
+
+        if (values.Count > 1)
+        {
+            var placeholders = string.Join(",", values.Select((_, i) => $"@p{paramIndex + i}"));
+            filters.Add($"{key} IN ({placeholders})");
+            parameters.AddRange(values);
+            paramIndex += values.Count;
+        }
+        else
+        {
+            filters.Add($"{key} = @p{paramIndex}");
+            parameters.Add(values[0]);
+            paramIndex++;
+        }
+    }
+
+    var whereClause = filters.Any() ? $"WHERE {string.Join(" AND ", filters)}" : "";
+
+    string sql = $@"
+        SELECT * FROM titles
+        {whereClause}
+        LIMIT @p{paramIndex} OFFSET @p{paramIndex + 1}
+    ";
+    parameters.Add(pageSize);
+    parameters.Add(offset);
+
+    var results = RunQuery(sql, parameters.ToArray());
+    return Results.Ok(results);
+});
+
+app.MapGet("/countries", (HttpRequest req) =>
+{
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
+    string sql = "select distinct country from titles where country is not null and trim(country) != ''";
+    var result = RunQuery(sql);
+
+    var countries = result
+        .Select(row => row.GetValueOrDefault("country")?.ToString())
+        .Where(c => !string.IsNullOrWhiteSpace(c))
+        .Distinct()
+        .OrderBy(c => c)
+        .ToList();
+
+    return Results.Ok(countries);
+});
+
+
+// 🎬 /titles (supports filtering by multiple values like ?title=A&title=B)
+app.MapGet("/titles", (HttpRequest req) =>
+{
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
     var query = req.Query;
 
     bool countOnly = query.TryGetValue("countOnly", out var countOnlyVal) && bool.TryParse(countOnlyVal, out var parsedBool) && parsedBool;
@@ -373,8 +940,27 @@ app.MapGet("/api/titles", (HttpRequest req) =>
     return Results.Ok(RunQuery(fullSql, parameters.ToArray()));
 });
 
-app.MapPost("/api/titles", async (HttpRequest req) =>
+app.MapPost("/titles", async (HttpRequest req) =>
 {
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
     try
     {
         var body = await req.ReadFromJsonAsync<Dictionary<string, List<string>>>();
@@ -394,23 +980,28 @@ app.MapPost("/api/titles", async (HttpRequest req) =>
     }
 });
 
-// 👤 /api/users
-app.MapGet("/api/users", (int? user_id, string? email) =>
+// 🎞️ /similar-movies
+app.MapGet("/similar-movies", (HttpRequest req, string? title) =>
 {
-    if (user_id == null && email == null)
-        return Results.BadRequest("Must provide user_id or email");
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
 
-    string sql = user_id != null ? 
-        "SELECT * FROM users WHERE user_id = @p0" : 
-        "SELECT * FROM users WHERE email = @p0";
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
 
-    var result = RunQuery(sql, new object[] { user_id?.ToString() ?? email! });
-    return result.Count > 0 ? Results.Ok(result[0]) : Results.NotFound("User not found");
-});
-
-// 🎞️ /api/similar-movies
-app.MapGet("/api/similar-movies", (string? title) =>
-{
     if (!string.IsNullOrEmpty(title))
     {
         var result = RunQuery("SELECT * FROM combined_top5_recommendations WHERE title = @p0", new object[] { title });
@@ -420,9 +1011,28 @@ app.MapGet("/api/similar-movies", (string? title) =>
     return Results.Ok(RunQuery("SELECT * FROM combined_top5_recommendations"));
 });
 
-// 🎯 /api/user-recommendations
-app.MapGet("/api/user-recommendations", (HttpRequest req) =>
+// 🎯 /user-recommendations
+app.MapGet("/user-recommendations", (HttpRequest req) =>
 {
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
     var query = req.Query;
     if (!query.Any())
         return Results.BadRequest("At least one query parameter is required");
