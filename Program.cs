@@ -42,21 +42,7 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-var API_KEY = Environment.GetEnvironmentVariable("API_KEY") ?? "abc123";
 string DB_PATH = "Data Source=unified_movies.db";
-
-// 🔐 API Key Middleware
-app.Use(async (context, next) =>
-{
-    var key = context.Request.Headers["X-API-Key"].FirstOrDefault();
-    if (key != API_KEY)
-    {
-        context.Response.StatusCode = 403;
-        await context.Response.WriteAsync("Unauthorized");
-        return;
-    }
-    await next();
-});
 
 app.Use(async (context, next) =>
 {
@@ -211,21 +197,22 @@ app.MapPost("/check-user", async (HttpContext context) =>
     connection.Open();
 
     using var checkCommand = connection.CreateCommand();
-    checkCommand.CommandText = "select admin from users where lower(email) = lower(@p0) limit 1";
+    checkCommand.CommandText = "select user_id, admin from users where lower(email) = lower(@p0) limit 1";
     checkCommand.Parameters.AddWithValue("@p0", email);
 
     using var readerDb = checkCommand.ExecuteReader();
 
     if (readerDb.Read())
     {
-        var isAdmin = readerDb.GetInt32(0) == 1;
+        var userId = readerDb.GetValue(0).ToString(); // user_id
+        var isAdmin = readerDb.GetInt32(1) == 1;       // admin
         context.Response.ContentType = "application/json";
-        await context.Response.WriteAsJsonAsync(new { exists = true, admin = isAdmin });
+        await context.Response.WriteAsJsonAsync(new { exists = true, admin = isAdmin, user_id = userId });
     }
     else
     {
         context.Response.ContentType = "application/json";
-        await context.Response.WriteAsJsonAsync(new { exists = false, admin = false });
+        await context.Response.WriteAsJsonAsync(new { exists = false, admin = false, user_id = (string?)null });
     }
 });
 
@@ -1046,18 +1033,13 @@ app.MapGet("/user-recommendations", (HttpRequest req) =>
 
 app.MapPost("/user-ratings", async (HttpContext context, UserRatingDto body) =>
 {
-    // 🔐 JWT auth check
+    /// 🔐 JWT auth check
     if (context.Request.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
         jwtClaims.TryGetValue("email", out var emailObj) &&
-        emailObj is string email)
+        emailObj is string email &&
+        !string.IsNullOrWhiteSpace(email))
     {
         Console.WriteLine($"🔐 Authenticated user: {email}");
-
-        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
-        if (userType != "authenticated" && userType != "admin")
-        {
-            return Results.Unauthorized();
-        }
     }
     else
     {
