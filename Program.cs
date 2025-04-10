@@ -1063,4 +1063,98 @@ app.MapGet("/user-recommendations", (HttpRequest req) =>
     return result.Count > 0 ? Results.Ok(result) : Results.NotFound("No matches found");
 });
 
+app.MapPost("/user-ratings", async (HttpContext context, UserRatingDto body) =>
+{
+    // 🔐 JWT auth check
+    if (context.Request.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+    
+    if (string.IsNullOrWhiteSpace(body.show_id) || string.IsNullOrWhiteSpace(body.user_id) || body.rating_id == 0)
+    {
+        Console.WriteLine("❌ Missing or empty fields");
+        return Results.BadRequest("Missing or empty fields");
+    }
+
+    string deleteSql = "DELETE FROM movie_ratings WHERE show_id = @p0 AND user_id = @p1";
+    RunQuery(deleteSql, new object[] { body.show_id, body.user_id });
+
+    string insertSql = "INSERT INTO movie_ratings (show_id, user_id, rating) VALUES (@p0, @p1, @p2)";
+    RunQuery(insertSql, new object[] { body.show_id, body.user_id, body.rating_id });
+
+    Console.WriteLine($"✅ Saved rating: {body.rating_id} for show {body.show_id}, user {body.user_id}");
+
+    return Results.Ok(new
+    {
+        success = true,
+        show_id = body.show_id,
+        user_id = body.user_id,
+        rating = body.rating_id
+    });
+});
+
+app.MapGet("/user-ratings", (HttpRequest req) =>
+{
+    // 🔐 JWT auth check
+    if (req.HttpContext.Items["jwt"] is Dictionary<string, object> jwtClaims &&
+        jwtClaims.TryGetValue("email", out var emailObj) &&
+        emailObj is string email)
+    {
+        Console.WriteLine($"🔐 Authenticated user: {email}");
+
+        var userType = email == "ry2402@gmail.com" ? "admin" : "authenticated";
+        if (userType != "authenticated" && userType != "admin")
+        {
+            return Results.Unauthorized();
+        }
+    }
+    else
+    {
+        Console.WriteLine("❌ No valid JWT or email found.");
+        return Results.Unauthorized();
+    }
+
+    var query = req.Query;
+
+    if (!query.TryGetValue("user_id", out var userIdVal))
+    {
+        return Results.BadRequest("Missing user_id");
+    }
+
+    var userId = userIdVal.ToString();
+
+    if (query.TryGetValue("show_id", out var showIdVal))
+    {
+        var showId = showIdVal.ToString();
+        string singleSql = "SELECT rating FROM movie_ratings WHERE user_id = @p0 AND show_id = @p1 LIMIT 1";
+        var singleResult = RunQuery(singleSql, new object[] { userId, showId });
+
+        if (singleResult.Count == 0)
+        {
+            return Results.Ok(new { rating = (int?)null }); // no rating found
+        }
+
+        return Results.Ok(new { rating = singleResult[0]["rating"] });
+    }
+
+    // No show_id = return all ratings for user
+    string allSql = "SELECT * FROM movie_ratings WHERE user_id = @p0";
+    var allResult = RunQuery(allSql, new object[] { userId });
+    return Results.Ok(allResult);
+});
+
 app.Run();
