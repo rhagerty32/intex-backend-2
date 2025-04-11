@@ -861,3 +861,8 @@
 /Users/ryan/GROUND/School/IS/intex-backend-2/obj/Debug/net8.0/CineNicheAPI.pdb
 /Users/ryan/GROUND/School/IS/intex-backend-2/obj/Debug/net8.0/CineNicheAPI.genruntimeconfig.cache
 /Users/ryan/GROUND/School/IS/intex-backend-2/obj/Debug/net8.0/ref/CineNicheAPI.dll
+/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/web.config
+/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/appsettings.Development.json
+/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/appsettings.json
+/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/CineNicheAPI.deps.json
+/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/CineNicheAPI.runtimeconfig.json
