@@ -1,20 +1,20 @@
 {
   "format": 1,
   "restore": {
-    "/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/CineNicheAPI.csproj": {}
+    "/Users/ryan/GROUND/School/IS/intex-backend-2/CineNicheAPI.csproj": {}
   },
   "projects": {
-    "/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/CineNicheAPI.csproj": {
+    "/Users/ryan/GROUND/School/IS/intex-backend-2/CineNicheAPI.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/CineNicheAPI.csproj",
+        "projectUniqueName": "/Users/ryan/GROUND/School/IS/intex-backend-2/CineNicheAPI.csproj",
         "projectName": "CineNicheAPI",
-        "projectPath": "/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/CineNicheAPI.csproj",
-        "packagesPath": "/Users/westonwatson/.nuget/packages/",
-        "outputPath": "/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/obj/",
+        "projectPath": "/Users/ryan/GROUND/School/IS/intex-backend-2/CineNicheAPI.csproj",
+        "packagesPath": "/Users/ryan/.nuget/packages/",
+        "outputPath": "/Users/ryan/GROUND/School/IS/intex-backend-2/obj/",
         "projectStyle": "PackageReference",
         "configFilePaths": [
-          "/Users/westonwatson/.nuget/NuGet/NuGet.Config"
+          "/Users/ryan/.nuget/NuGet/NuGet.Config"
         ],
         "originalTargetFrameworks": [
           "net8.0"
@@ -93,7 +93,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/8.0.406/PortableRuntimeIdentifierGraph.json"
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/8.0.401/PortableRuntimeIdentifierGraph.json"
         }
       }
     }

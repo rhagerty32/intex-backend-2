@@ -11,6 +11,7 @@ using FuzzySharp.SimilarityRatio.Scorer;
 using FuzzySharp.PreProcess;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using FuzzySharp.SimilarityRatio.Scorer.StrategySensitive;
 
 DotNetEnv.Env.Load();
 
@@ -22,7 +23,8 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins(
             "http://localhost:5173",
-            "https://gray-river-0d060131e.6.azurestaticapps.net"
+            "https://gray-river-0d060131e.6.azurestaticapps.net",
+            "https://cineniche.info"
         )
         .AllowAnyHeader()
         .AllowAnyMethod()
@@ -651,8 +653,12 @@ app.MapGet("/search", async (HttpRequest req) =>
         query,
         blobToMovie.Keys,
         s => s,
-        limit: 25
-    );
+        limit: 25,
+        scorer: new TokenSetScorer()
+    )
+    .Where(m => m.Score >= 50)
+    .Take(25)
+    .ToList();
 
     var results = matches
         .Select(match => new
@@ -972,11 +978,11 @@ app.MapGet("/similar-movies", (HttpRequest req, string? title) =>
 
     if (!string.IsNullOrEmpty(title))
     {
-        var result = RunQuery("SELECT * FROM combined_top5_recommendations WHERE title = @p0", new object[] { title });
+        var result = RunQuery("SELECT * FROM similar_movies WHERE title = @p0", new object[] { title });
         return result.Count > 0 ? Results.Ok(result[0]) : Results.NotFound("Title not found");
     }
 
-    return Results.Ok(RunQuery("SELECT * FROM combined_top5_recommendations"));
+    return Results.Ok(RunQuery("SELECT * FROM similar_movies"));
 });
 
 // 🎯 /user-recommendations
@@ -1026,7 +1032,7 @@ app.MapGet("/user-recommendations", (HttpRequest req) =>
         }
     }
 
-    string sql = $"SELECT * FROM personalized_recommendations WHERE {string.Join(" AND ", filters)}";
+    string sql = $"SELECT * FROM user_recommendations WHERE {string.Join(" AND ", filters)}";
     var result = RunQuery(sql, values.ToArray());
     return result.Count > 0 ? Results.Ok(result) : Results.NotFound("No matches found");
 });
