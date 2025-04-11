@@ -518,11 +518,6 @@
 /Users/ryan/Desktop/intex-backend/intex-backend-2/obj/Debug/net8.0/ref/CineNicheAPI.dll
 /Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/appsettings.Development.json
 /Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/appsettings.json
-/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/web.config
-/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/appsettings.Development.json
-/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/appsettings.json
-/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/CineNicheAPI.deps.json
-/Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/publish/CineNicheAPI.runtimeconfig.json
 /Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/unified_movies.db
 /Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/CineNicheAPI
 /Users/westonwatson/Developer/intext-backend-2/intex-backend-2/bin/Debug/net8.0/DotNetEnv.dll
