@@ -353,8 +353,11 @@ app.MapGet("/superSearch", (HttpRequest req) =>
         query,
         blobToMovie.Keys,
         s => s,
-        limit: 50
-    );
+        limit: 50,
+        scorer: new TokenSetScorer()
+    ).Where(m => m.Score >= 50)
+    .Take(25)
+    .ToList();
 
     var results = matches
         .Select(match => blobToMovie[match.Value])
@@ -362,9 +365,6 @@ app.MapGet("/superSearch", (HttpRequest req) =>
 
     return Results.Ok(results);
 });
-
-
-
 
 app.MapPost("/add-movie", async (HttpRequest req) =>
 {
