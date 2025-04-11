@@ -22,7 +22,7 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins(
             "http://localhost:5173",
-            "https://zealous-water-0b3cb241e.6.azurestaticapps.net"
+            "https://gray-river-0d060131e.6.azurestaticapps.net"
         )
         .AllowAnyHeader()
         .AllowAnyMethod()
